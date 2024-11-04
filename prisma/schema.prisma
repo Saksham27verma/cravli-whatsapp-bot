@@ -1,0 +1,61 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id          String   @id @unique
+  email       String   @unique
+  userProfile Profile?
+}
+
+model Profile {
+  id                        Int      @id @default(autoincrement())
+  userId                    String?  @unique
+  user                      User?    @relation(fields: [userId], references: [id])
+  name                      String?
+  age                       String?
+  gender                    String?
+  weight                    String?
+  height                    String?
+  activity_level            String?
+  dietary_preferences       String?
+  allergies                 String?
+  health_goals              String?
+  current_health_conditions String?
+  daily_calorie_intake_goal String?
+  preferred_cuisines        String?
+  meal_type_preferences     String?
+  snack_preferences         String?
+  disliked_ingredients      String?
+  favorite_ingredients      String?
+  meal_timing_preferences   String?
+  number_of_meals_per_day   String?
+  meal_prep_frequency       String?
+  cooking_skill_level       String?
+  budget_for_ingredients    String?
+  roomId                    String?
+  images                    Image[]
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+model Image {
+  id          Int      @id @default(autoincrement())
+  profileId   Int
+  profile     Profile? @relation(fields: [profileId], references: [id])
+  imageUrl    String
+  description String?
+  isFood      Boolean
+}

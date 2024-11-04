@@ -9,11 +9,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@prisma/client": "^5.21.1",
     "@supabase/supabase-js": "^2.46.1",
     "@whiskeysockets/baileys": "^6.7.7",
     "dotenv": "^16.4.5",
     "openai": "^4.68.4",
     "pino": "^8.19.0",
+    "prisma": "^5.21.1",
     "qrcode-terminal": "^0.12.0",
     "sqlite3": "^5.1.7",
     "wa-sticker-formatter": "^1.6.0"

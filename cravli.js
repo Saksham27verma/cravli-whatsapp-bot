@@ -1,5 +1,7 @@
 const { OpenAI } = require('openai');
-const { existsSync, writeFileSync, readFileSync } = require('fs');
+const { existsSync, readFileSync } = require('fs');
+const { downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { createClient } = require('@supabase/supabase-js');
 
 class cravli {
     #socket;
@@ -7,14 +9,23 @@ class cravli {
     #sendMessage;
     #openai;
     #chatHistory;
+    #supabase;
     #HISTORY_FILE = 'chat_history.json';
+    #BUCKET_NAME = 'images';
     #trigger;
 
     constructor(config = {}) {
-        this.#trigger = config.trigger || 'ai'; // Default trigger word
+        this.#trigger = config.trigger || 'ai';
         this.#openai = new OpenAI({
-            apiKey: config.apiKey || process.env.OPENAI_API_KEY
+            apiKey: config.apiKey || "sk-svcacct-UPuZ0IeYD9_LWw8DC0cf0mzbiOk9uTjaWQY9ZElyE1G4mOL6pW1N0IlDUbAg63CDfiT-T3BlbkFJ3j7otWObxaOv1CreR6TG5NTeqzk0BLjWLFSoYPyjX1hFKFI-4h1yHE7yA9wkx1Ig2rIA"
         });
+
+        // Initialize Supabase client
+        this.#supabase = createClient(
+            config.supabaseUrl || "https://ugsncolxovohsuqtahme.supabase.com",
+            config.supabaseKey || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnc25jb2x4b3ZvaHN1cXRhaG1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjkxOTY0NTEsImV4cCI6MjA0NDc3MjQ1MX0.zW0IiZ9lgMYD__t_HOFoGcULXXylsxBvs7CLOrv8nvk"
+        );
+
         this.#chatHistory = new Map();
 
         // Load chat history from file if exists
@@ -34,6 +45,71 @@ class cravli {
             this.#saveHistory();
             process.exit(0);
         });
+
+        // Initialize Supabase bucket if it doesn't exist
+        this.#initSupabaseBucket();
+    }
+
+    async #initSupabaseBucket() {
+        try {
+            // Check if bucket exists
+            const { data: buckets, error: listError } = await this.#supabase.storage.listBuckets();
+
+            const bucketExists = buckets.some(bucket => bucket.name === this.#BUCKET_NAME);
+
+            if (!bucketExists) {
+                // Create the bucket if it doesn't exist
+                const { data, error } = await this.#supabase.storage.createBucket(this.#BUCKET_NAME, {
+                    public: false, // Set to true if you want the images to be publicly accessible
+                    fileSizeLimit: 5242880, // 5MB limit
+                });
+
+                if (error) throw error;
+                console.log('Created Supabase bucket:', this.#BUCKET_NAME);
+            }
+        } catch (error) {
+            console.error('Error initializing Supabase bucket:', error);
+        }
+    }
+
+    async #uploadImageToSupabase(buffer, filename, metadata) {
+        try {
+            // Upload image to Supabase Storage
+            const { data, error } = await this.#supabase.storage
+                .from(this.#BUCKET_NAME)
+                .upload(filename, buffer, {
+                    contentType: 'image/jpeg',
+                    upsert: false
+                });
+
+            if (error) throw error;
+
+            // Get the public URL of the uploaded image
+            const { data: { publicUrl } } = this.#supabase.storage
+                .from(this.#BUCKET_NAME)
+                .getPublicUrl(filename);
+
+            // Store metadata in a separate table
+            const { data: metadataEntry, error: metadataError } = await this.#supabase
+                .from('image_metadata')
+                .insert([{
+                    filename: filename,
+                    storage_path: data.path,
+                    public_url: publicUrl,
+                    sender_id: metadata.senderId,
+                    chat_id: metadata.chatId,
+                    timestamp: metadata.timestamp,
+                    mime_type: 'image/jpeg'
+                }]);
+
+            if (metadataError) throw metadataError;
+
+            console.log('Image uploaded successfully to Supabase');
+            return { path: data.path, publicUrl };
+        } catch (error) {
+            console.error('Error uploading to Supabase:', error);
+            throw error;
+        }
     }
 
     init(socket, getText, sendMessage) {
@@ -47,18 +123,64 @@ class cravli {
         writeFileSync(this.#HISTORY_FILE, JSON.stringify(historyObj));
     }
 
+    async #handleImage(message, remoteJid) {
+        try {
+            // Generate a unique filename
+            const timestamp = new Date().getTime();
+            const filename = `${timestamp}-${remoteJid.replace('@s.whatsapp.net', '')}.jpg`;
+
+            // Download the image as buffer
+            const buffer = await downloadMediaMessage(
+                message,
+                'buffer',
+                {},
+                {
+                    logger: console,
+                    reuploadRequest: this.#socket.updateMediaMessage
+                }
+            );
+
+            // Prepare metadata
+            const metadata = {
+                senderId: remoteJid,
+                chatId: remoteJid,
+                timestamp: new Date().toISOString(),
+            };
+
+            // Upload to Supabase
+            const { publicUrl } = await this.#uploadImageToSupabase(buffer, filename, metadata);
+
+            return publicUrl;
+        } catch (error) {
+            console.error('Error handling image:', error);
+            throw error;
+        }
+    }
+
     async process(key, message) {
         try {
-            const text = this.#getText(key, message);
-            
-            // Check if message starts with trigger
-            if (!text.startsWith('')) return;
-
-            // Skip group messages if needed
-            if (key.remoteJid.endsWith('@g.us')) return;
-
             // Skip messages sent by the bot itself
             if (key.fromMe) return;
+
+            // Check if the message contains an image
+            const messageType = Object.keys(message.message || {})[0];
+            if (messageType === 'imageMessage') {
+                const publicUrl = await this.#handleImage(message, key.remoteJid);
+                await this.#sendMessage(
+                    key.remoteJid,
+                    {
+                        text: 'Image received and uploaded successfully! You can access it at: ' + publicUrl
+                    },
+                    { quoted: { key, message } }
+                );
+                return;
+            }
+
+            // Rest of your existing message processing code...
+            const text = this.#getText(key, message);
+
+            if (!text.startsWith('')) return;
+            if (key.remoteJid.endsWith('@g.us')) return;
 
             console.log(`Received message from ${key.remoteJid}: ${text}`);
 
@@ -81,9 +203,9 @@ class cravli {
 
             // Prepare messages for OpenAI
             const messages = [
-                { 
-                    role: 'system', 
-                    content: 'Your name is Cravli, a friendly and professional dietician bot dedicated to creating personalized meal plans based on comprehensive user information. Begin by introducing yourself and explaining the process. Gather user details step-by-step in the following order: start with basic info, including the user’s name, age, and gender. Next, collect physical stats such as weight and height. Continue with health information, covering activity level, dietary preferences, and allergies. Ask about goals and preferences, including health goals, current health conditions, and any specific daily calorie intake goal. Inquire about meal preferences, like preferred cuisines, meal types, snack preferences, and disliked ingredients. Then, gather details on favorite ingredients, meal timing, number of meals per day, and meal prep frequency. Lastly, ask for practical considerations, including cooking skill level and budget for ingredients. Keep responses brief, clear, and free of emojis or complex punctuation.' 
+                {
+                    role: 'system',
+                    content: 'Your name is Cravli, a friendly and professional dietician bot dedicated to creating personalized meal plans based on comprehensive user information...'
                 },
                 ...userHistory
             ];
@@ -95,15 +217,6 @@ class cravli {
                 max_tokens: 150,
                 temperature: 0.7
             });
-
-            // Use the JS library to create a bucket.
-
-            const { data, error } = await supabase.storage.createBucket('images', {
-                public: true,
-                allowedMimeTypes: ['image/*'],
-                fileSizeLimit: '1MB',
-            })
-  
 
             const response = completion.choices[0].message.content;
 
@@ -121,11 +234,10 @@ class cravli {
 
         } catch (error) {
             console.error('Error processing message:', error);
-            // Send error message to user
             await this.#sendMessage(
                 key.remoteJid,
-                { 
-                    text: 'Sorry, I encountered an error processing your message. Please try again later.' 
+                {
+                    text: 'Sorry, I encountered an error processing your message. Please try again later.'
                 },
                 { quoted: { key, message } }
             );
