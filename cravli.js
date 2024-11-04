@@ -17,13 +17,13 @@ class cravli {
     constructor(config = {}) {
         this.#trigger = config.trigger || 'ai';
         this.#openai = new OpenAI({
-            apiKey: config.apiKey || "sk-svcacct-UPuZ0IeYD9_LWw8DC0cf0mzbiOk9uTjaWQY9ZElyE1G4mOL6pW1N0IlDUbAg63CDfiT-T3BlbkFJ3j7otWObxaOv1CreR6TG5NTeqzk0BLjWLFSoYPyjX1hFKFI-4h1yHE7yA9wkx1Ig2rIA"
-        });
+            apiKey: process.env.OPENAI_API_KEY
+        })
 
         // Initialize Supabase client
         this.#supabase = createClient(
-            config.supabaseUrl || "https://ugsncolxovohsuqtahme.supabase.com",
-            config.supabaseKey || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVnc25jb2x4b3ZvaHN1cXRhaG1lIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjkxOTY0NTEsImV4cCI6MjA0NDc3MjQ1MX0.zW0IiZ9lgMYD__t_HOFoGcULXXylsxBvs7CLOrv8nvk"
+            process.env.SUPABASE_URL,
+            process.env.SUPABASE_ANON_KEY
         );
 
         this.#chatHistory = new Map();
